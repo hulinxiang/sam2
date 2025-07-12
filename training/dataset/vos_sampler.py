@@ -15,11 +15,11 @@ MAX_RETRIES = 1000
 
 @dataclass
 class SampledFramesAndObjects:
-    frames: List[int]
-    object_ids: List[int]
+    frames: List[int] # 一组采样的视频帧
+    object_ids: List[int] # 要追踪的目标对象ID
 
 
-class VOSSampler:
+class VOSSampler: # 整个video object segmentation 采样器系统的接口设计
     def __init__(self, sort_frames=True):
         # frames are ordered by frame id when sort_frames is True
         self.sort_frames = sort_frames
