@@ -18,7 +18,7 @@ from sam2.modeling.sam2_utils import get_1d_sine_pe, MLP, select_closest_cond_fr
 # a large negative value as a placeholder score for missing objects
 NO_OBJ_SCORE = -1024.0
 
-
+# memory bank 是通过 MemoryEncoder 编码并缓存在某些 token 中，随后由 MemoryAttention 跨帧访问，实现对历史帧/提示的持久记忆和交互。
 class SAM2Base(torch.nn.Module):
     def __init__(
         self,

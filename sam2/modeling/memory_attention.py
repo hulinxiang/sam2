@@ -13,7 +13,7 @@ from sam2.modeling.sam.transformer import RoPEAttention
 
 from sam2.modeling.sam2_utils import get_activation_fn, get_clones
 
-
+# 用于将 提示（Prompt）与图像特征进行融合
 class MemoryAttentionLayer(nn.Module):
 
     def __init__(
@@ -55,6 +55,7 @@ class MemoryAttentionLayer(nn.Module):
         self.pos_enc_at_cross_attn_queries = pos_enc_at_cross_attn_queries
         self.pos_enc_at_cross_attn_keys = pos_enc_at_cross_attn_keys
 
+    # Self-Attention for Prompt Embeddings（即对当前 prompt 向量做 self-attention）
     def _forward_sa(self, tgt, query_pos):
         # Self-Attention
         tgt2 = self.norm1(tgt)
@@ -63,6 +64,7 @@ class MemoryAttentionLayer(nn.Module):
         tgt = tgt + self.dropout1(tgt2)
         return tgt
 
+    # Cross-Attention: Prompt 与 图像特征融合
     def _forward_ca(self, tgt, memory, query_pos, pos, num_k_exclude_rope=0):
         kwds = {}
         if num_k_exclude_rope > 0:
@@ -80,6 +82,11 @@ class MemoryAttentionLayer(nn.Module):
         tgt = tgt + self.dropout2(tgt2)
         return tgt
 
+    # Prompt embeddings (curr) →
+    #     Self-Attn →
+    #     Cross-Attn with image →
+    #     FFN →
+    # 输出融合后的 prompt features
     def forward(
         self,
         tgt,
@@ -97,6 +104,23 @@ class MemoryAttentionLayer(nn.Module):
         tgt2 = self.linear2(self.dropout(self.activation(self.linear1(tgt2))))
         tgt = tgt + self.dropout3(tgt2)
         return tgt
+
+
+# 这是对上面的 MemoryAttentionLayer 做 多层堆叠（类似 TransformerDecoder） 的封装
+# prompt embeddings(point / box / mask)
+# │
+# [MemoryAttention]
+# ┌───────────────┐
+# │     Layer 1   │
+# │ Self - Attn   │
+# │ Cross - Attn ⟵ image feats
+# │ FFN           │
+# └───────────────┘
+# ↓
+# ...
+# repeat N times...
+# ↓
+# fused prompt features
 
 
 class MemoryAttention(nn.Module):

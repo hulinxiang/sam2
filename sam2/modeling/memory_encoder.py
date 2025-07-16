@@ -13,6 +13,38 @@ import torch.nn.functional as F
 
 from sam2.modeling.sam2_utils import DropPath, get_clones, LayerNorm2d
 
+# MemoryEncoder 负责将 image features + mask prompts 编码成 memory 表征，
+# 然后 MemoryAttention 负责将这些 memory 与当前 query（如 prompt token）交互（Cross-Attention），形成最终的表示。
+
+
+# ✅ MemoryEncoder 的作用：
+# 把图像特征（pixel-level features）和下采样的 mask（即 mask prompt）进行融合，输出 memory 表征 + position encoding。
+
+# ✅ MemoryAttention 的作用：
+# 用 prompt tokens（如 box prompt/point prompt）作为 query，和 memory（来自 MemoryEncoder）做 cross-attention，得到 enriched prompt embedding。
+
+#           ┌──────────────┐
+#           │ Image Encoder│  →  pix_feat (B, C, H, W)
+#           └─────┬────────┘
+#                 ↓
+#          ┌────────────┐
+#          │ Raw Mask   │  →  masks (B, 1, H, W)
+#          └────┬───────┘
+#               ↓
+#       ┌──────────────────────┐
+#       │    MemoryEncoder     │ ← Downsample + Fuse + PosEnc
+#       └──────┬───────────────┘
+#              ↓
+#     memory ← vision_features
+#     memory_pos ← vision_pos_enc
+#
+#       ┌────────────────────────┐
+#       │     Prompt Tokens      │ ← e.g. point/box/mask tokens
+#       └────────┬───────────────┘
+#                ↓
+#          ┌───────────────┐
+#          │ MemoryAttention│ ←  uses memory & memory_pos
+#          └───────────────┘
 
 class MaskDownSampler(nn.Module):
     """
