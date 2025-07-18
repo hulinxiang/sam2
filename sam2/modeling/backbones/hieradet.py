@@ -23,14 +23,14 @@ from sam2.modeling.sam2_utils import DropPath, MLP
 
 
 def do_pool(x: torch.Tensor, pool: nn.Module, norm: nn.Module = None) -> torch.Tensor:
-    if pool is None:
+    if pool is None: # ① 如果没有传入池化层，直接返回原张量
         return x
     # (B, H, W, C) -> (B, C, H, W)
-    x = x.permute(0, 3, 1, 2)
-    x = pool(x)
+    x = x.permute(0, 3, 1, 2) # ② 把通道 C 放到第 2 维，PyTorch 的池化层要求 NCHW
+    x = pool(x) # ③ 应用池化：通常是 MaxPool2d 或 AvgPool2d
     # (B, C, H', W') -> (B, H', W', C)
-    x = x.permute(0, 2, 3, 1)
-    if norm:
+    x = x.permute(0, 2, 3, 1) # ④ 再换回 NHWC，方便后续 LayerNorm／MLP（它们默认 Channels-last 更快）
+    if norm: # ⑤ 如果传进来归一化层（例如 LayerNorm(eps=1e-6)）
         x = norm(x)
 
     return x
@@ -43,6 +43,10 @@ class MultiScaleAttention(nn.Module):
         dim_out: int,
         num_heads: int,
         q_pool: nn.Module = None,
+        # dim: 输入特征的通道数（比如 64）
+        # dim_out: 输出特征的通道数（一般和 dim 相等或是 2×）
+        # num_heads: 注意力头数量
+        # q_pool: 给 Q 做下采样的模块（一般是 nn.AvgPool2d、MaxPool2d 或自定义的卷积）
     ):
         super().__init__()
 
