@@ -36,6 +36,7 @@ def do_pool(x: torch.Tensor, pool: nn.Module, norm: nn.Module = None) -> torch.T
     return x
 
 
+# 多尺度注意力机制
 class MultiScaleAttention(nn.Module):
     def __init__(
         self,
