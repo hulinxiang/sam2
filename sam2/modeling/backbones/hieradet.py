@@ -59,8 +59,17 @@ class MultiScaleAttention(nn.Module):
         self.proj = nn.Linear(dim_out, dim_out)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        B, H, W, _ = x.shape
+        B, H, W, _ = x.shape # B = Batch Size; H = Height; W = Width
         # qkv with shape (B, H * W, 3, nHead, C)
+        # 它把输入的 x（形状是 [B, H, W, dim]）通过一个线性层，生成一个更长的向量，长度为 dim_out * 3
+        # | 维度 | 含义 |
+        # | ----------- | ------------------------------------- |
+        # | `B` | batch 大小 |
+        # | `H * W` | 每张图像的像素数（把2D图展平成序列） |
+        # | `3` | Q、K、V 三个向量 |
+        # | `num_heads` | 多头注意力中的头数 |
+        # | `head_dim` | 每个头的维度，自动推算（= dim\_out // num\_heads） |
+
         qkv = self.qkv(x).reshape(B, H * W, 3, self.num_heads, -1)
         # q, k, v with shape (B, H * W, nheads, C)
         q, k, v = torch.unbind(qkv, 2)
@@ -79,9 +88,10 @@ class MultiScaleAttention(nn.Module):
         )
         # Transpose back
         x = x.transpose(1, 2)
-        x = x.reshape(B, H, W, -1)
+        x = x.reshape(B, H, W, -1) # 拼回空间格式，最后一维变为 n_heads × head_dim
 
-        x = self.proj(x)
+        x = self.proj(x) # 这一步之前的x相当于只是把多个注意力头的值放在了一起，但是没有把他们进行融合
+        # 每个头看的是不同的“角度”, proj 让它们的信息“融合成一个统一视角”
 
         return x
 
