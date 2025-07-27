@@ -11,6 +11,14 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+# | 步骤 | 模块           | 作用                       |
+# | -- | ------------ | ------------------------ |
+# | 1  | `trunk`      | 提取多层原始特征（多分辨率、不同通道）      |
+# | 2  | `neck` (FPN) | 统一通道数 + 融合信息 + 加位置编码     |
+# | 3  | `scalp`      | 剃掉最深层（可选）                |
+# | 4  | `output`     | 返回给 Transformer 的特征和位置编码 |
+
+
 class ImageEncoder(nn.Module):
     def __init__(
         self,

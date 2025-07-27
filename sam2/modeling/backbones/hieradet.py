@@ -194,6 +194,8 @@ class Hiera(nn.Module):
         q_pool: int = 3,  # number of q_pool stages
         q_stride: Tuple[int, int] = (2, 2),  # downsample stride bet. stages
         stages: Tuple[int, ...] = (2, 3, 16, 3),  # blocks per stage
+        # 四个stage，Stage 3 和 Stage 4 是用于 建模语义表示、供 memory attention 使用
+        # Stage 1 和 Stage 2 只是辅助提高分割的精细度
         dim_mul: float = 2.0,  # dim_mul factor at stage shift
         head_mul: float = 2.0,  # head_mul factor at stage shift
         window_pos_embed_bkg_spatial_size: Tuple[int, int] = (14, 14),

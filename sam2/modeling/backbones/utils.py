@@ -64,7 +64,12 @@ class PatchEmbed(nn.Module):
     """
     Image to Patch Embedding.
     """
-
+    # PatchEmbed 会把一张图像切成多个小 patch，每个 patch 提炼成一个 token 向量，作为 Transformer 的输入
+    # PatchEmbed 的作用：
+    # 用一个大卷积核滑动整张图像，切成小块（patch），比如每个 patch 是 16×16 像素。
+    # 然后：
+    # 每个 patch 被看作一个 "token"
+    # 每个 token 会被映射成一个向量，送进 Transformer 处理
     def __init__(
         self,
         kernel_size: Tuple[int, ...] = (7, 7),
