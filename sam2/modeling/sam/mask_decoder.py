@@ -11,20 +11,22 @@ from torch import nn
 
 from sam2.modeling.sam2_utils import LayerNorm2d, MLP
 
+# MaskDecoder 的任务是：
+# 根据图像特征（由 ImageEncoder 输出）+ 用户提示（点、框、掩码）→ 输出多个候选掩码 + 每个掩码的质量评估（IoU 预测）.
 
 class MaskDecoder(nn.Module):
     def __init__(
         self,
         *,
-        transformer_dim: int,
-        transformer: nn.Module,
-        num_multimask_outputs: int = 3,
+        transformer_dim: int, # transformer的特征维度（如256）
+        transformer: nn.Module, # 用于掩码生成的transformer模块
+        num_multimask_outputs: int = 3, # 多掩码预测输出数量（例如点击时可能生成多个mask供选择）
         activation: Type[nn.Module] = nn.GELU,
-        iou_head_depth: int = 3,
-        iou_head_hidden_dim: int = 256,
-        use_high_res_features: bool = False,
-        iou_prediction_use_sigmoid=False,
-        dynamic_multimask_via_stability=False,
+        iou_head_depth: int = 3, # 用于IoU预测的MLP深度
+        iou_head_hidden_dim: int = 256, # 用于IoU预测的MLP隐藏层维度
+        use_high_res_features: bool = False, # 是否使用高分辨率特征
+        iou_prediction_use_sigmoid=False, # IoU预测是否用sigmoid输出
+        dynamic_multimask_via_stability=False, # 不稳定时是否使用备用掩码
         dynamic_multimask_stability_delta=0.05,
         dynamic_multimask_stability_thresh=0.98,
         pred_obj_scores: bool = False,
