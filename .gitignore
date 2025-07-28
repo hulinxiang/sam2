@@ -18,3 +18,4 @@ demo/backend/checkpoints/*.pt
 .idea/inspectionProfiles/Project_Default.xml
 sam2_logs/configs/sam2.1_training/sam2.1_hiera_b+_MOSE_finetune.yaml/config_resolved.yaml
 sam2_logs/configs/sam2.1_training/sam2.1_hiera_b+_MOSE_finetune.yaml/config.yaml
+.idea/workspace.xml
