@@ -25,6 +25,7 @@ class SAM2Base(torch.nn.Module):
         image_encoder,
         memory_attention,
         memory_encoder,
+        # 记忆帧的数量 默认是7: 1 当前帧 + 6 历史帧
         num_maskmem=7,  # default 1 input frame + 6 previous frames
         image_size=512,
         backbone_stride=16,  # stride of the image backbone output
@@ -664,10 +665,11 @@ class SAM2Base(torch.nn.Module):
         memory = torch.cat(to_cat_memory, dim=0)
         memory_pos_embed = torch.cat(to_cat_memory_pos_embed, dim=0)
 
+        # 当前帧特征与历史memory进行cross-attention
         pix_feat_with_mem = self.memory_attention(
             curr=current_vision_feats,
             curr_pos=current_vision_pos_embeds,
-            memory=memory,
+            memory=memory # 来自MemoryEncoder的历史帧信息,
             memory_pos=memory_pos_embed,
             num_obj_ptr_tokens=num_obj_ptr_tokens,
         )
@@ -708,6 +710,7 @@ class SAM2Base(torch.nn.Module):
             mask_for_mem = mask_for_mem * self.sigmoid_scale_for_mem_enc
         if self.sigmoid_bias_for_mem_enc != 0.0:
             mask_for_mem = mask_for_mem + self.sigmoid_bias_for_mem_enc
+        # 将当前帧的特征和预测的mask作为memory输入到memory_encoder中
         maskmem_out = self.memory_encoder(
             pix_feat, mask_for_mem, skip_mask_sigmoid=True  # sigmoid already applied
         )
