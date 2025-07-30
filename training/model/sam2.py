@@ -28,8 +28,8 @@ class SAM2Train(SAM2Base):
         image_encoder,
         memory_attention=None,
         memory_encoder=None,
-        prob_to_use_pt_input_for_train=0.0,
-        prob_to_use_pt_input_for_eval=0.0,
+        prob_to_use_pt_input_for_train=0.0, # 训练时使用点击输入的概率
+        prob_to_use_pt_input_for_eval=0.0, # 训练时使用框输入的概率
         prob_to_use_box_input_for_train=0.0,
         prob_to_use_box_input_for_eval=0.0,
         # if it is greater than 1, we interactive point sampling in the 1st frame and other randomly selected frames
@@ -73,6 +73,10 @@ class SAM2Train(SAM2Base):
         self.forward_backbone_per_frame_for_eval = forward_backbone_per_frame_for_eval
 
         # Point sampler and conditioning frames
+        # =============================================================================
+        # 多模态输入训练策略 
+        # 通过概率控制来平衡不同输入模式的训练频率，提高模型泛化能力
+        # =============================================================================
         self.prob_to_use_pt_input_for_train = prob_to_use_pt_input_for_train
         self.prob_to_use_box_input_for_train = prob_to_use_box_input_for_train
         self.prob_to_use_pt_input_for_eval = prob_to_use_pt_input_for_eval
@@ -222,18 +226,23 @@ class SAM2Train(SAM2Base):
         backbone_out["mask_inputs_per_frame"] = {}  # {frame_idx: <input_masks>}
         backbone_out["point_inputs_per_frame"] = {}  # {frame_idx: <input_points>}
         for t in init_cond_frames:
+            # 关键：训练时动态选择输入模式
             if not use_pt_input:
+                # 模式1: 直接使用mask作为输入
                 backbone_out["mask_inputs_per_frame"][t] = gt_masks_per_frame[t]
             else:
                 # During training # P(box) = prob_to_use_pt_input * prob_to_use_box_input
+                # 模式2&3: 使用点击或框输入
                 use_box_input = self.rng.random() < prob_to_use_box_input
                 if use_box_input:
+                    # 框输入模式：从mask边界框采样点
                     points, labels = sample_box_points(
                         gt_masks_per_frame[t],
                     )
                 else:
                     # (here we only sample **one initial point** on initial conditioning frames from the
                     # ground-truth mask; we may sample more correction points on the fly)
+                    # 点击输入模式：从mask中心采样点
                     points, labels = get_next_point(
                         gt_masks=gt_masks_per_frame[t],
                         pred_masks=None,
@@ -281,17 +290,26 @@ class SAM2Train(SAM2Base):
                 feat_sizes,
             ) = self._prepare_backbone_features(backbone_out)
 
+        # =============================================================================
+        # 多步预测与联合优化 
+        # 不同于传统方法的逐帧独立训练，这里实现了真正的视频级优化
+        # =============================================================================
+
         # Starting the stage loop
         num_frames = backbone_out["num_frames"]
         init_cond_frames = backbone_out["init_cond_frames"]
         frames_to_add_correction_pt = backbone_out["frames_to_add_correction_pt"]
         # first process all the initial conditioning frames to encode them as memory,
         # and then conditioning on them to track the remaining frames
+
+        # 智能处理顺序：先处理条件帧，再处理追踪帧
         processing_order = init_cond_frames + backbone_out["frames_not_in_init_cond"]
         output_dict = {
-            "cond_frame_outputs": {},  # dict containing {frame_idx: <out>}
-            "non_cond_frame_outputs": {},  # dict containing {frame_idx: <out>}
+            "cond_frame_outputs": {},  # dict containing {frame_idx: <out>} 条件帧输出 (用作memory)
+            "non_cond_frame_outputs": {},  # dict containing {frame_idx: <out>} 非条件帧输出
         }
+
+        # 核心循环：逐帧处理与memory累积
         for stage_id in processing_order:
             # Get the image features for the current frames
             # img_ids = input.find_inputs[stage_id].img_ids
@@ -323,7 +341,7 @@ class SAM2Train(SAM2Base):
                 mask_inputs=backbone_out["mask_inputs_per_frame"].get(stage_id, None),
                 gt_masks=backbone_out["gt_masks_per_frame"].get(stage_id, None),
                 frames_to_add_correction_pt=frames_to_add_correction_pt,
-                output_dict=output_dict,
+                output_dict=output_dict, # 关键：输出结果用于memory累积
                 num_frames=num_frames,
             )
             # Append the output, depending on whether it's a conditioning frame
@@ -339,11 +357,13 @@ class SAM2Train(SAM2Base):
         if return_dict:
             return output_dict
         # turn `output_dict` into a list for loss function
+        # 关键：将所有帧的预测结果用于联合损失计算
         all_frame_outputs = {}
         all_frame_outputs.update(output_dict["cond_frame_outputs"])
         all_frame_outputs.update(output_dict["non_cond_frame_outputs"])
         all_frame_outputs = [all_frame_outputs[t] for t in range(num_frames)]
         # Make DDP happy with activation checkpointing by removing unused keys
+        # 关键：移除不用于损失计算的key
         all_frame_outputs = [
             {k: v for k, v in d.items() if k != "obj_ptr"} for d in all_frame_outputs
         ]
@@ -460,8 +480,13 @@ class SAM2Train(SAM2Base):
         object_score_logits,
         current_out,
     ):
-
+        # =============================================================================
+        # 迭代式点击修正训练
+        # 模拟真实交互：让模型学会从错误中改进预测
+        # =============================================================================
+    
         assert gt_masks is not None
+        # 保存所有迭代步骤的预测结果，用于损失计算
         all_pred_masks = [low_res_masks]
         all_pred_high_res_masks = [high_res_masks]
         all_pred_multimasks = [low_res_multimasks]
@@ -469,9 +494,17 @@ class SAM2Train(SAM2Base):
         all_pred_ious = [ious]
         all_point_inputs = [point_inputs]
         all_object_score_logits = [object_score_logits]
+        # 迭代修正循环
         for _ in range(self.num_correction_pt_per_frame):
             # sample a new point from the error between prediction and ground-truth
             # (with a small probability, directly sample from GT masks instead of errors)
+            # 智能点采样策略：
+            # 1. 根据概率从GT masks中采样点
+            # 2. 根据概率从预测结果中采样点
+            # 3. 根据概率从预测结果中采样点
+            # 4. 根据概率从预测结果中采样点
+            # 5. 根据概率从预测结果中采样点
+            # 6. 根据概率从预测结果中采样点
             if self.training and self.prob_to_sample_from_gt_for_train > 0:
                 sample_from_gt = (
                     self.rng.random() < self.prob_to_sample_from_gt_for_train
@@ -479,24 +512,28 @@ class SAM2Train(SAM2Base):
             else:
                 sample_from_gt = False
             # if `pred_for_new_pt` is None, only GT masks will be used for point sampling
+            # 关键：基于当前预测错误采样新点击位置
             pred_for_new_pt = None if sample_from_gt else (high_res_masks > 0)
             new_points, new_labels = get_next_point(
                 gt_masks=gt_masks,
-                pred_masks=pred_for_new_pt,
+                pred_masks=pred_for_new_pt, # 当前预测结果
                 method="uniform" if self.training else self.pt_sampling_for_eval,
             )
+            # 将新点击添加到现有点击序列中
             point_inputs = concat_points(point_inputs, new_points, new_labels)
             # Feed the mask logits of the previous SAM outputs in the next SAM decoder step.
             # For tracking, this means that when the user adds a correction click, we also feed
             # the tracking output mask logits along with the click as input to the SAM decoder.
-            mask_inputs = low_res_masks
+            # 关键：前一步预测结果作为输入
+            mask_inputs = low_res_masks # 前一步预测结果
+            # 基于累计的点击和前一步预测，生成新的预测
             multimask_output = self._use_multimask(is_init_cond_frame, point_inputs)
             if self.use_act_ckpt_iterative_pt_sampling and not multimask_output:
                 sam_outputs = torch.utils.checkpoint.checkpoint(
                     self._forward_sam_heads,
                     backbone_features=pix_feat_with_mem,
-                    point_inputs=point_inputs,
-                    mask_inputs=mask_inputs,
+                    point_inputs=point_inputs, # 累积的所有点击
+                    mask_inputs=mask_inputs, # 前一步预测作为输入
                     high_res_features=high_res_features,
                     multimask_output=multimask_output,
                     use_reentrant=False,
@@ -518,6 +555,7 @@ class SAM2Train(SAM2Base):
                 _,
                 object_score_logits,
             ) = sam_outputs
+            # 保存所有迭代步骤的预测结果，用于损失计算
             all_pred_masks.append(low_res_masks)
             all_pred_high_res_masks.append(high_res_masks)
             all_pred_multimasks.append(low_res_multimasks)
@@ -528,6 +566,7 @@ class SAM2Train(SAM2Base):
 
         # Concatenate the masks along channel (to compute losses on all of them,
         # using `MultiStepIteractiveMasks`)
+        # 关键：将所有迭代步骤的预测结果拼接，用于损失计算
         current_out["multistep_pred_masks"] = torch.cat(all_pred_masks, dim=1)
         current_out["multistep_pred_masks_high_res"] = torch.cat(
             all_pred_high_res_masks, dim=1

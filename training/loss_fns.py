@@ -223,7 +223,7 @@ class MultiStepMultiMasksAndIous(nn.Module):
             focal_alpha_obj_score: alpha for sigmoid focal loss on object scores
         """
         # =============================================================================
-        # MultiStepMultiMasksAndIous - 综合损失管理器
+        # MultiStepMultiMasksAndIous - 综合损失管理器: 协调 focal、dice、iou、class四种损失
         # 目标: 管理和组合多种损失函数，支持多步预测和多mask输出
         #
         # 核心功能:

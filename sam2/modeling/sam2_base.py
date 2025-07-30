@@ -507,6 +507,11 @@ class SAM2Base(torch.nn.Module):
         track_in_reverse=False,  # tracking in reverse time order (for demo usage)
     ):
         """Fuse the current frame's visual feature map with previous memory."""
+        # =============================================================================
+        # Memory Bank Cross-Attention机制
+        # 这是SAM2最核心的创新：实现真正的时序信息传递
+        # =============================================================================
+
         B = current_vision_feats[-1].size(1)  # batch size on this frame
         C = self.hidden_dim
         H, W = feat_sizes[-1]  # top-level (lowest-resolution) feature size
@@ -527,6 +532,8 @@ class SAM2Base(torch.nn.Module):
             # when getting temporal positional embedding below)
             assert len(output_dict["cond_frame_outputs"]) > 0
             # Select a maximum number of temporally closest cond frames for cross attention
+
+            # 从cond_frame_outputs(历史memory)中选择最接近的cond帧
             cond_outputs = output_dict["cond_frame_outputs"]
             selected_cond_outputs, unselected_cond_outputs = select_closest_cond_frames(
                 frame_idx, cond_outputs, self.max_cond_frames_in_attn
@@ -537,15 +544,18 @@ class SAM2Base(torch.nn.Module):
             # We also allow taking the memory frame non-consecutively (with stride>1), in which case
             # we take (self.num_maskmem - 2) frames among every stride-th frames plus the last frame.
             stride = 1 if self.training else self.memory_temporal_stride_for_eval
+            # 智能memory选择算法
             for t_pos in range(1, self.num_maskmem):
                 t_rel = self.num_maskmem - t_pos  # how many frames before current frame
                 if t_rel == 1:
                     # for t_rel == 1, we take the last frame (regardless of r)
+                    # 优先级最高：紧邻的前一帧(历史连续性)
                     if not track_in_reverse:
                         # the frame immediately before this frame (i.e. frame_idx - 1)
                         prev_frame_idx = frame_idx - t_rel
                     else:
                         # the frame immediately after this frame (i.e. frame_idx + 1)
+                        # 按stride采样更早的帧 (时序代表性)
                         prev_frame_idx = frame_idx + t_rel
                 else:
                     # for t_rel >= 2, we take the memory frame from every r-th frames
@@ -568,17 +578,22 @@ class SAM2Base(torch.nn.Module):
                     out = unselected_cond_outputs.get(prev_frame_idx, None)
                 t_pos_and_prevs.append((t_pos, out))
 
+            # Memory特征提取与位置编码
             for t_pos, prev in t_pos_and_prevs:
                 if prev is None:
                     continue  # skip padding frames
                 # "maskmem_features" might have been offloaded to CPU in demo use cases,
                 # so we load it back to GPU (it's a no-op if it's already on GPU).
+
+                # 从CPU加载memory特征到GPU
                 feats = prev["maskmem_features"].to(device, non_blocking=True)
                 to_cat_memory.append(feats.flatten(2).permute(2, 0, 1))
                 # Spatial positional encoding (it might have been offloaded to CPU in eval)
+                # 时空位置编码融合
                 maskmem_enc = prev["maskmem_pos_enc"][-1].to(device)
                 maskmem_enc = maskmem_enc.flatten(2).permute(2, 0, 1)
                 # Temporal positional encoding
+                # 时序位置编码：告诉模型这是多久前的信息
                 maskmem_enc = (
                     maskmem_enc + self.maskmem_tpos_enc[self.num_maskmem - t_pos - 1]
                 )
@@ -662,15 +677,16 @@ class SAM2Base(torch.nn.Module):
             to_cat_memory_pos_embed = [self.no_mem_pos_enc.expand(1, B, self.mem_dim)]
 
         # Step 2: Concatenate the memories and forward through the transformer encoder
+        # 核心：跨帧Cross-Attention融合
         memory = torch.cat(to_cat_memory, dim=0)
         memory_pos_embed = torch.cat(to_cat_memory_pos_embed, dim=0)
 
         # 当前帧特征与历史memory进行cross-attention
         pix_feat_with_mem = self.memory_attention(
-            curr=current_vision_feats,
-            curr_pos=current_vision_pos_embeds,
-            memory=memory # 来自MemoryEncoder的历史帧信息,
-            memory_pos=memory_pos_embed,
+            curr=current_vision_feats, # Query: 当前帧特征
+            curr_pos=current_vision_pos_embeds, # Query: 当前帧位置编码
+            memory=memory, # Key: 来自MemoryEncoder的历史帧信息,
+            memory_pos=memory_pos_embed, # Key: 来自MemoryEncoder的历史帧位置编码
             num_obj_ptr_tokens=num_obj_ptr_tokens,
         )
         # reshape the output (HW)BC => BCHW
